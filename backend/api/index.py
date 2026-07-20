@@ -12,9 +12,13 @@ import uuid
 from datetime import datetime
 import os
 
+from dotenv import load_dotenv
 import google.generativeai as genai
 
-# Configure Gemini using an environment variable
+# Load .env file
+load_dotenv()
+
+# Configure Gemini
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 model = genai.GenerativeModel("gemini-2.5-flash")
@@ -32,7 +36,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Change to your frontend URL in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -104,7 +108,10 @@ def send_message(body: SendMessageRequest):
 
     chat["messages"].append(user_msg)
 
-    ai_text = chatbot(body.message)
+    try:
+        ai_text = chatbot(body.message)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
     if len(chat["messages"]) == 1:
         chat["title"] = body.message[:40] + ("..." if len(body.message) > 40 else "")
