@@ -1,165 +1,284 @@
-# Aether AI — Full-Stack Chatbot App
+# Aether AI
 
-A production-quality AI chat application powered by **Gemini 2.5 Flash**, built with React + Vite + FastAPI.
+Aether AI is a full-stack AI chatbot application built using **React**, **FastAPI**, **PostgreSQL (Supabase)**, and **Google Gemini 2.5 Flash**. The application provides a modern conversational interface with persistent chat history, multiple chat sessions, and a responsive user experience.
+
+---
+
+## Features
+
+- Google Gemini 2.5 Flash integration
+- Persistent chat history using PostgreSQL
+- Multiple chat sessions
+- Automatic conversation titles
+- Rename and delete conversations
+- Delete all conversations
+- Responsive user interface
+- Dark and light theme support
+- FastAPI REST API
+- SQLAlchemy ORM
+- React with Zustand state management
+- Tailwind CSS styling
+
+---
+
+## Technology Stack
+
+### Frontend
+
+- React
+- Vite
+- Tailwind CSS
+- Zustand
+- Axios
+- React Hot Toast
+
+### Backend
+
+- FastAPI
+- SQLAlchemy
+- PostgreSQL (Supabase)
+- Google Gen AI SDK (`google-genai`)
+- Uvicorn
 
 ---
 
 ## Project Structure
 
-```
+```text
 chatapp/
+│
 ├── backend/
-│   ├── main.py              ← FastAPI server + your Gemini chatbot
-│   └── requirements.txt
-└── frontend/
-    ├── index.html
-    ├── vite.config.js
-    ├── tailwind.config.js
-    ├── package.json
-    └── src/
-        ├── App.jsx
-        ├── main.jsx
-        ├── pages/
-        │   ├── LoginPage.jsx
-        │   ├── SignupPage.jsx
-        │   └── ChatPage.jsx
-        ├── components/
-        │   ├── layout/
-        │   │   ├── Sidebar.jsx
-        │   │   └── Navbar.jsx
-        │   ├── chat/
-        │   │   ├── ChatArea.jsx
-        │   │   ├── ChatInput.jsx
-        │   │   ├── Message.jsx
-        │   │   ├── TypingIndicator.jsx
-        │   │   └── WelcomeScreen.jsx
-        │   └── ui/
-        │       └── SettingsModal.jsx
-        ├── store/
-        │   ├── authStore.js
-        │   ├── chatStore.js
-        │   └── themeStore.js
-        ├── utils/
-        │   ├── api.js
-        │   └── export.js
-        └── styles/
-            └── globals.css
+│   ├── api/
+│   │   └── index.py
+│   ├── crud.py
+│   ├── database.py
+│   ├── models.py
+│   ├── schemas.py
+│   ├── create_tables.py
+│   ├── requirements.txt
+│   └── .env
+│
+├── frontend/
+│   ├── src/
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── store/
+│   │   ├── utils/
+│   │   └── styles/
+│   ├── package.json
+│   └── vite.config.js
+│
+└── README.md
 ```
 
 ---
 
-## Quick Start
+## Installation
 
-### 1. Backend (FastAPI + Gemini)
+### Clone the Repository
 
 ```bash
-cd chatapp/backend
+git clone https://github.com/<your-username>/chatapp.git
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate        # Windows: venv\Scripts\activate
+cd chatapp
+```
 
-# Install dependencies
+---
+
+## Backend Setup
+
+Navigate to the backend directory.
+
+```bash
+cd backend
+```
+
+Create a virtual environment.
+
+```bash
+python -m venv .venv
+```
+
+Activate the virtual environment.
+
+### macOS / Linux
+
+```bash
+source .venv/bin/activate
+```
+
+### Windows
+
+```bash
+.venv\Scripts\activate
+```
+
+Install the required dependencies.
+
+```bash
 pip install -r requirements.txt
-
-# Start the API server
-uvicorn main:app --reload --port 8000
 ```
 
-Backend runs at → **http://localhost:8000**
-API docs at → **http://localhost:8000/docs**
+Create a `.env` file inside the backend directory.
+
+```env
+GEMINI_API_KEY=YOUR_GEMINI_API_KEY
+
+DATABASE_URL=YOUR_SUPABASE_DATABASE_URL
+```
+
+Start the backend server.
+
+```bash
+uvicorn api.index:app --reload
+```
+
+The backend will be available at:
+
+```
+http://127.0.0.1:8000
+```
+
+API documentation:
+
+```
+http://127.0.0.1:8000/docs
+```
 
 ---
 
-### 2. Frontend (React + Vite)
+## Frontend Setup
+
+Navigate to the frontend directory.
 
 ```bash
-cd chatapp/frontend
+cd frontend
+```
 
-# Install Node dependencies
+Install dependencies.
+
+```bash
 npm install
+```
 
-# Start development server
+Start the development server.
+
+```bash
 npm run dev
 ```
 
-Frontend runs at → **http://localhost:5173**
+The frontend will be available at:
+
+```
+http://localhost:5173
+```
 
 ---
 
-## Chatbot Integration
+## Environment Variables
 
-Your Gemini code is already wired into `backend/main.py`:
+Create a `.env` file inside the backend directory.
 
-```python
-import google.generativeai as genai
+```env
+GEMINI_API_KEY=YOUR_GEMINI_API_KEY
 
-genai.configure(api_key="YOUR_API_KEY")
-_model = genai.GenerativeModel("gemini-2.5-flash")
-
-def chatbot(message: str) -> str:
-    response = _model.generate_content(message)
-    return response.text
+DATABASE_URL=YOUR_SUPABASE_DATABASE_URL
 ```
 
-The `chatbot()` function is called on every `/chat` POST request automatically.
+Example:
+
+```env
+GEMINI_API_KEY=AIza...
+
+DATABASE_URL=postgresql://postgres:password@db.supabase.co:5432/postgres
+```
 
 ---
 
 ## API Endpoints
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
+|---------|----------|-------------|
+| GET | `/` | Health check |
 | POST | `/new-chat` | Create a new chat session |
-| POST | `/chat` | Send a message, get AI response |
-| GET | `/history` | List all chat sessions |
-| GET | `/chat/{id}` | Get full chat with messages |
-| DELETE | `/chat/{id}` | Delete a chat |
-| PATCH | `/chat/{id}/rename` | Rename a chat |
-| DELETE | `/chats/all` | Clear all chats |
+| POST | `/chat` | Send a message and receive an AI response |
+| GET | `/history` | Retrieve chat history |
+| GET | `/chat/{chat_id}` | Retrieve a specific conversation |
+| PATCH | `/chat/{chat_id}/rename` | Rename a conversation |
+| DELETE | `/chat/{chat_id}` | Delete a conversation |
+| DELETE | `/chats/all` | Delete all conversations |
 
 ---
 
-## Features
+## Database
 
-- ✅ Gemini 2.5 Flash integration
-- ✅ Login / Signup pages (glassmorphism design)
-- ✅ Chat with full message history
-- ✅ Markdown + code block rendering with syntax highlighting
-- ✅ Typing indicator ("Gemini is thinking…")
-- ✅ Dark / Light mode with persistence
-- ✅ Sidebar with rename, delete, search
-- ✅ Copy message, regenerate response, like/dislike
-- ✅ Export chat as TXT / JSON / PDF
-- ✅ Welcome screen with suggested prompts
-- ✅ Fully responsive (mobile, tablet, desktop)
-- ✅ Framer Motion animations throughout
+The application uses PostgreSQL hosted on Supabase.
 
----
+### Chats Table
 
-## Production Build
+- id
+- title
+- created_at
+- updated_at
 
-```bash
-# Build frontend
-cd frontend && npm run build
+### Messages Table
 
-# Serve with uvicorn (mount static files)
-cd ../backend && uvicorn main:app --host 0.0.0.0 --port 8000
-```
-
-Or deploy frontend to Vercel/Netlify and backend to Railway/Render.
+- id
+- chat_id
+- role
+- content
+- timestamp
 
 ---
 
-## Environment Variables (optional hardening)
+## Gemini Integration
 
-Create `backend/.env`:
-```
-GEMINI_API_KEY=your_key_here
-```
+The backend uses the latest Google Gen AI SDK.
 
-Then in `main.py`:
 ```python
-import os
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+from google import genai
+
+client = genai.Client(api_key=GEMINI_API_KEY)
+
+response = client.models.generate_content(
+    model="gemini-2.5-flash",
+    contents=message,
+)
 ```
+
+---
+
+## Deployment
+
+The frontend can be deployed on platforms such as **Vercel** or **Netlify**.
+
+The backend can be deployed on **Vercel**, **Render**, **Railway**, or any platform that supports FastAPI applications.
+
+---
+
+## Future Enhancements
+
+- User authentication
+- Streaming AI responses
+- Image upload support
+- Voice interaction
+- Chat search
+- Conversation export
+- Shared conversation links
+
+---
+
+## License
+
+This project is licensed under the MIT License.
+
+---
+
+## Author
+
+**Sanjana V Shetty**
+
+GitHub: https://github.com/<your-github-username>
+
+LinkedIn: https://www.linkedin.com/in/<your-linkedin-profile>
+
