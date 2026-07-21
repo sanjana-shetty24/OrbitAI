@@ -1,5 +1,6 @@
 import os
 import sys
+import traceback
 from typing import List
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -128,13 +129,16 @@ def send_message(payload: schemas.ChatMessageRequest, db: Session = Depends(get_
         crud.update_chat_title(db, chat, title or "New Chat")
 
     # Gemini response
-    try:
-        reply_text = chatbot(payload.message)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Gemini request failed: {str(exc)}",
-        ) from exc
+    # Gemini response
+try:
+    reply_text = chatbot(payload.message)
+except Exception as exc:
+    traceback.print_exc()  # Print full traceback in terminal
+
+    raise HTTPException(
+        status_code=502,
+        detail=f"Gemini request failed: {exc}",
+    ) from exc
 
     # Save assistant response
     crud.add_message(
