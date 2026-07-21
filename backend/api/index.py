@@ -7,8 +7,7 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
-# Allow imports from the backend/ root (database.py, models.py, schemas.py, crud.py)
-# when this module is executed as api/index.py (e.g. on Vercel).
+# Allow imports from the backend/ root
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import crud
@@ -18,9 +17,9 @@ from database import Base, SessionLocal, engine
 
 from google import genai
 
-# ─────────────────────────────────────────────────────────────
-# Gemini Setup (New google-genai SDK)
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
+# Gemini Setup
+# -------------------------------------------------------------
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
@@ -35,13 +34,12 @@ def chatbot(message: str) -> str:
         model="gemini-2.5-flash",
         contents=message,
     )
-
     return response.text
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Database Setup
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 Base.metadata.create_all(bind=engine)
 
@@ -81,9 +79,9 @@ def _make_preview(content: str, limit: int = 100) -> str:
     return content[:limit] + ("..." if len(content) > limit else "")
 
 
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 # Routes
-# ─────────────────────────────────────────────────────────────
+# -------------------------------------------------------------
 
 @app.get("/")
 def root():
@@ -117,7 +115,12 @@ def send_message(payload: schemas.ChatMessageRequest, db: Session = Depends(get_
     is_first_message = crud.get_message_count(db, chat.id) == 0
 
     # Save user message
-    crud.add_message(db, chat.id, role="user", content=payload.message)
+    crud.add_message(
+        db,
+        chat.id,
+        role="user",
+        content=payload.message,
+    )
 
     # Auto-title first message
     if is_first_message:
@@ -129,16 +132,15 @@ def send_message(payload: schemas.ChatMessageRequest, db: Session = Depends(get_
         crud.update_chat_title(db, chat, title or "New Chat")
 
     # Gemini response
-    # Gemini response
-try:
-    reply_text = chatbot(payload.message)
-except Exception as exc:
-    traceback.print_exc()  # Print full traceback in terminal
+    try:
+        reply_text = chatbot(payload.message)
+    except Exception as exc:
+        traceback.print_exc()
 
-    raise HTTPException(
-        status_code=502,
-        detail=f"Gemini request failed: {exc}",
-    ) from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"Gemini request failed: {exc}",
+        ) from exc
 
     # Save assistant response
     crud.add_message(
