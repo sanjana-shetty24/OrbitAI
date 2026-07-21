@@ -1,136 +1,244 @@
-import { create } from 'zustand'
+import { create } from "zustand";
 import {
-  createNewChat, sendMessage, fetchHistory,
-  fetchChat, deleteChat, renameChat, clearAllChats
-} from '../utils/api'
-import toast from 'react-hot-toast'
+  createNewChat,
+  sendMessage,
+  fetchHistory,
+  fetchChat,
+  deleteChat,
+  renameChat,
+  clearAllChats,
+} from "../utils/api";
+import toast from "react-hot-toast";
 
 export const useChatStore = create((set, get) => ({
+  // ─────────────────────────────
   // State
-  chats: [],            // sidebar list
+  // ─────────────────────────────
+  chats: [],
   activeChatId: null,
-  activeChat: null,     // full chat with messages
+  activeChat: null,
   isLoading: false,
   isTyping: false,
   sidebarOpen: true,
 
-  // ── Sidebar ────────────────────────────────────────────────
-  toggleSidebar: () => set(s => ({ sidebarOpen: !s.sidebarOpen })),
-  setSidebar: (v) => set({ sidebarOpen: v }),
+  // ─────────────────────────────
+  // Sidebar
+  // ─────────────────────────────
+  toggleSidebar: () =>
+    set((s) => ({
+      sidebarOpen: !s.sidebarOpen,
+    })),
 
-  // ── Load history ──────────────────────────────────────────
+  setSidebar: (value) =>
+    set({
+      sidebarOpen: value,
+    }),
+
+  // ─────────────────────────────
+  // Load History
+  // ─────────────────────────────
   loadHistory: async () => {
     try {
-      const chats = await fetchHistory()
-      set({ chats })
-    } catch {
-      // Backend may not be running — silently skip
+      const chats = await fetchHistory();
+      set({ chats });
+    } catch (err) {
+      console.error(err);
     }
   },
 
-  // ── New chat ──────────────────────────────────────────────
+  // ─────────────────────────────
+  // Create New Chat
+  // ─────────────────────────────
   newChat: async () => {
     try {
-      const chat = await createNewChat()
-      set(s => ({
-        chats: [{ ...chat, message_count: 0, preview: '' }, ...s.chats],
+      const chat = await createNewChat();
+
+      set((state) => ({
+        chats: [
+          {
+            ...chat,
+            message_count: 0,
+            preview: "",
+          },
+          ...state.chats,
+        ],
         activeChatId: chat.id,
         activeChat: chat,
-      }))
-      return chat
-    } catch {
-      toast.error('Could not create chat — is the backend running?')
+      }));
+
+      return chat;
+    } catch (err) {
+      console.error(err);
+      toast.error("Could not create chat");
     }
   },
 
-  // ── Select chat ───────────────────────────────────────────
+  // ─────────────────────────────
+  // Select Chat
+  // ─────────────────────────────
   selectChat: async (chatId) => {
-    if (get().activeChatId === chatId) return
-    set({ isLoading: true, activeChatId: chatId })
+    if (chatId === get().activeChatId) return;
+
+    set({
+      activeChatId: chatId,
+      isLoading: true,
+    });
+
     try {
-      const chat = await fetchChat(chatId)
-      set({ activeChat: chat, isLoading: false })
-    } catch {
-      set({ isLoading: false })
-      toast.error('Failed to load chat')
+      const chat = await fetchChat(chatId);
+
+      set({
+        activeChat: chat,
+        isLoading: false,
+      });
+    } catch (err) {
+      console.error(err);
+
+      set({
+        isLoading: false,
+      });
+
+      toast.error("Failed to load chat");
     }
   },
 
-  // ── Send message ──────────────────────────────────────────
+  // ─────────────────────────────
+  // Send Message
+  // ─────────────────────────────
   sendMessage: async (text) => {
-    const { activeChatId, activeChat } = get()
-    if (!activeChatId || !text.trim()) return
+    const { activeChatId } = get();
 
-    // Optimistic user bubble
-    const tempUserMsg = {
-      id: `tmp-${Date.now()}`,
-      role: 'user',
+    if (!activeChatId || !text.trim()) return;
+
+    const tempUserMessage = {
+      id: `temp-${Date.now()}`,
+      role: "user",
       content: text,
       timestamp: new Date().toISOString(),
-    }
-    set(s => ({
-      activeChat: { ...s.activeChat, messages: [...(s.activeChat?.messages || []), tempUserMsg] },
+    };
+
+    set((state) => ({
+      activeChat: {
+        ...state.activeChat,
+        messages: [
+          ...(state.activeChat?.messages || []),
+          tempUserMessage,
+        ],
+      },
       isTyping: true,
-    }))
+    }));
 
     try {
-      const data = await sendMessage(activeChatId, text)
-      // Replace active chat with server version (has real IDs + AI message)
-      set(s => ({
-        activeChat: data.chat,
+      const data = await sendMessage(activeChatId, text);
+
+      // Build updated chat using current chat + latest messages
+      const updatedChat = {
+        ...get().activeChat,
+        messages: data.messages,
+      };
+
+      set((state) => ({
+        activeChat: updatedChat,
         isTyping: false,
-        chats: s.chats.map(c =>
-          c.id === activeChatId
-            ? { ...c, title: data.chat.title, preview: data.message.content.slice(0, 80), updated_at: data.chat.updated_at, message_count: data.chat.messages.length }
-            : c
+
+        chats: state.chats.map((chat) =>
+          chat.id === activeChatId
+            ? {
+                ...chat,
+                preview: data.reply.slice(0, 80),
+                message_count: data.messages.length,
+              }
+            : chat
         ),
-      }))
-    } catch {
-      set(s => ({
-        activeChat: { ...s.activeChat, messages: s.activeChat.messages.filter(m => m.id !== tempUserMsg.id) },
+      }));
+    } catch (err) {
+      console.error(err);
+
+      set((state) => ({
+        activeChat: {
+          ...state.activeChat,
+          messages: state.activeChat.messages.filter(
+            (m) => m.id !== tempUserMessage.id
+          ),
+        },
         isTyping: false,
-      }))
-      toast.error('Failed to send message')
+      }));
+
+      toast.error("Failed to send message");
     }
   },
 
-  // ── Delete chat ───────────────────────────────────────────
+  // ─────────────────────────────
+  // Delete Chat
+  // ─────────────────────────────
   deleteChat: async (chatId) => {
     try {
-      await deleteChat(chatId)
-      set(s => {
-        const chats = s.chats.filter(c => c.id !== chatId)
-        const activeChatId = s.activeChatId === chatId ? null : s.activeChatId
-        const activeChat   = s.activeChatId === chatId ? null : s.activeChat
-        return { chats, activeChatId, activeChat }
-      })
-      toast.success('Chat deleted')
-    } catch {
-      toast.error('Failed to delete chat')
+      await deleteChat(chatId);
+
+      set((state) => ({
+        chats: state.chats.filter((c) => c.id !== chatId),
+        activeChatId:
+          state.activeChatId === chatId
+            ? null
+            : state.activeChatId,
+        activeChat:
+          state.activeChatId === chatId
+            ? null
+            : state.activeChat,
+      }));
+
+      toast.success("Chat deleted");
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to delete chat");
     }
   },
 
-  // ── Rename chat ───────────────────────────────────────────
+  // ─────────────────────────────
+  // Rename Chat
+  // ─────────────────────────────
   renameChat: async (chatId, title) => {
     try {
-      await renameChat(chatId, title)
-      set(s => ({
-        chats: s.chats.map(c => c.id === chatId ? { ...c, title } : c),
-        activeChat: s.activeChat?.id === chatId ? { ...s.activeChat, title } : s.activeChat,
-      }))
-    } catch {
-      toast.error('Failed to rename chat')
+      await renameChat(chatId, title);
+
+      set((state) => ({
+        chats: state.chats.map((chat) =>
+          chat.id === chatId
+            ? { ...chat, title }
+            : chat
+        ),
+
+        activeChat:
+          state.activeChat?.id === chatId
+            ? {
+                ...state.activeChat,
+                title,
+              }
+            : state.activeChat,
+      }));
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to rename chat");
     }
   },
 
-  // ── Clear all ─────────────────────────────────────────────
+  // ─────────────────────────────
+  // Clear All Chats
+  // ─────────────────────────────
   clearAll: async () => {
     try {
-      await clearAllChats()
-      set({ chats: [], activeChatId: null, activeChat: null })
-      toast.success('All chats cleared')
-    } catch {
-      toast.error('Failed to clear chats')
+      await clearAllChats();
+
+      set({
+        chats: [],
+        activeChatId: null,
+        activeChat: null,
+      });
+
+      toast.success("All chats cleared");
+    } catch (err) {
+      console.error(err);
+      toast.error("Failed to clear chats");
     }
   },
-}))
+}));
