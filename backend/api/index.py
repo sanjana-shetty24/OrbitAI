@@ -15,21 +15,33 @@ import models
 import schemas
 from database import Base, SessionLocal, engine
 
-import google.generativeai as genai
+from google import genai
 
-# ── Gemini setup (unchanged) ─────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# Gemini Setup (New google-genai SDK)
+# ─────────────────────────────────────────────────────────────
+
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
-_model = genai.GenerativeModel("gemini-2.5-flash")
+
+if not GEMINI_API_KEY:
+    raise RuntimeError("GEMINI_API_KEY environment variable is not set.")
+
+client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 def chatbot(message: str) -> str:
-    response = _model.generate_content(message)
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=message,
+    )
+
     return response.text
 
 
-# ── DB setup ──────────────────────────────────────────────────────────────
-# Tables already exist in Supabase, but this is a safe no-op if so.
+# ─────────────────────────────────────────────────────────────
+# Database Setup
+# ─────────────────────────────────────────────────────────────
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Aether AI Backend")
@@ -68,16 +80,23 @@ def _make_preview(content: str, limit: int = 100) -> str:
     return content[:limit] + ("..." if len(content) > limit else "")
 
 
-# ── Routes ────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────
+# Routes
+# ─────────────────────────────────────────────────────────────
 
 @app.get("/")
 def root():
-    return {"status": "ok", "service": "Aether AI Backend", "storage": "PostgreSQL"}
+    return {
+        "status": "ok",
+        "service": "Aether AI Backend",
+        "storage": "PostgreSQL",
+    }
 
 
 @app.post("/new-chat", response_model=schemas.ChatCreateResponse)
 def new_chat(db: Session = Depends(get_db)):
     chat = crud.create_chat(db, title="New Chat")
+
     return {
         "id": chat.id,
         "title": chat.title,
@@ -90,31 +109,41 @@ def new_chat(db: Session = Depends(get_db)):
 @app.post("/chat", response_model=schemas.ChatMessageResponse)
 def send_message(payload: schemas.ChatMessageRequest, db: Session = Depends(get_db)):
     chat = crud.get_chat(db, payload.chat_id)
+
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
     is_first_message = crud.get_message_count(db, chat.id) == 0
 
-    # Persist the user's message first.
+    # Save user message
     crud.add_message(db, chat.id, role="user", content=payload.message)
 
-    # Auto-title the chat from the first user message.
+    # Auto-title first message
     if is_first_message:
         title = payload.message.strip()
+
         if len(title) > 50:
             title = title[:50].rstrip() + "..."
+
         crud.update_chat_title(db, chat, title or "New Chat")
 
-    # Call Gemini.
+    # Gemini response
     try:
         reply_text = chatbot(payload.message)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(
-            status_code=502, detail=f"Gemini request failed: {str(exc)}"
+            status_code=502,
+            detail=f"Gemini request failed: {str(exc)}",
         ) from exc
 
-    # Persist the assistant's reply.
-    crud.add_message(db, chat.id, role="assistant", content=reply_text)
+    # Save assistant response
+    crud.add_message(
+        db,
+        chat.id,
+        role="assistant",
+        content=reply_text,
+    )
+
     crud.touch_chat(db, chat)
 
     messages = crud.get_messages_ordered(db, chat.id)
@@ -129,10 +158,14 @@ def send_message(payload: schemas.ChatMessageRequest, db: Session = Depends(get_
 @app.get("/history", response_model=List[schemas.ChatHistoryItem])
 def history(db: Session = Depends(get_db)):
     chats = crud.get_all_chats(db)
+
     result = []
+
     for chat in chats:
         messages = crud.get_messages_ordered(db, chat.id)
+
         preview = _make_preview(messages[-1].content) if messages else ""
+
         result.append(
             {
                 "id": chat.id,
@@ -143,16 +176,19 @@ def history(db: Session = Depends(get_db)):
                 "preview": preview,
             }
         )
+
     return result
 
 
 @app.get("/chat/{chat_id}", response_model=schemas.ChatDetailResponse)
 def get_chat_detail(chat_id: str, db: Session = Depends(get_db)):
     chat = crud.get_chat(db, chat_id)
+
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
     messages = crud.get_messages_ordered(db, chat_id)
+
     return {
         "id": chat.id,
         "title": chat.title,
@@ -164,9 +200,12 @@ def get_chat_detail(chat_id: str, db: Session = Depends(get_db)):
 
 @app.patch("/chat/{chat_id}/rename", response_model=schemas.RenameResponse)
 def rename_chat_endpoint(
-    chat_id: str, payload: schemas.RenameRequest, db: Session = Depends(get_db)
+    chat_id: str,
+    payload: schemas.RenameRequest,
+    db: Session = Depends(get_db),
 ):
     chat = crud.rename_chat(db, chat_id, payload.title)
+
     if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
@@ -180,13 +219,20 @@ def rename_chat_endpoint(
 @app.delete("/chat/{chat_id}", response_model=schemas.DeleteResponse)
 def delete_chat_endpoint(chat_id: str, db: Session = Depends(get_db)):
     deleted = crud.delete_chat(db, chat_id)
+
     if not deleted:
         raise HTTPException(status_code=404, detail="Chat not found")
 
-    return {"detail": "Chat deleted successfully"}
+    return {
+        "detail": "Chat deleted successfully",
+    }
 
 
 @app.delete("/chats/all", response_model=schemas.ClearAllResponse)
 def delete_all_chats_endpoint(db: Session = Depends(get_db)):
     count = crud.delete_all_chats(db)
-    return {"detail": "All chats deleted successfully", "deleted_chats": count}
+
+    return {
+        "detail": "All chats deleted successfully",
+        "deleted_chats": count,
+    }
