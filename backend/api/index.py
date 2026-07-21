@@ -1,38 +1,38 @@
-"""
-╔══════════════════════════════════════════════════════════════╗
-║        AI CHATBOT BACKEND - FastAPI + Gemini 2.5 Flash      ║
-╚══════════════════════════════════════════════════════════════╝
-"""
-
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional
-import uuid
-from datetime import datetime
 import os
+import sys
+from typing import List
 
-from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+
+# Allow imports from the backend/ root (database.py, models.py, schemas.py, crud.py)
+# when this module is executed as api/index.py (e.g. on Vercel).
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import crud
+import models
+import schemas
+from database import Base, SessionLocal, engine
+
 import google.generativeai as genai
 
-# Load .env file
-load_dotenv()
-
-# Configure Gemini
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
-model = genai.GenerativeModel("gemini-2.5-flash")
+# ── Gemini setup (unchanged) ─────────────────────────────────────────────
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
+_model = genai.GenerativeModel("gemini-2.5-flash")
 
 
 def chatbot(message: str) -> str:
-    response = model.generate_content(message)
+    response = _model.generate_content(message)
     return response.text
 
 
-app = FastAPI(
-    title="Aether AI API",
-    version="1.0.0"
-)
+# ── DB setup ──────────────────────────────────────────────────────────────
+# Tables already exist in Supabase, but this is a safe no-op if so.
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(title="Aether AI Backend")
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,162 +42,151 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# In-memory database
-chats_db = {}
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
-class ChatMessage(BaseModel):
-    role: str
-    content: str
-    timestamp: str
+def _serialize_messages(messages: List[models.Message]) -> List[dict]:
+    return [
+        {
+            "id": m.id,
+            "role": m.role,
+            "content": m.content,
+            "timestamp": m.timestamp,
+        }
+        for m in messages
+    ]
 
 
-class NewChatRequest(BaseModel):
-    title: Optional[str] = "New Chat"
+def _make_preview(content: str, limit: int = 100) -> str:
+    content = content or ""
+    return content[:limit] + ("..." if len(content) > limit else "")
 
 
-class SendMessageRequest(BaseModel):
-    chat_id: str
-    message: str
-
-
-class RenameChatRequest(BaseModel):
-    title: str
-
-
-def now_iso():
-    return datetime.utcnow().isoformat() + "Z"
-
+# ── Routes ────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def root():
+    return {"status": "ok", "service": "Aether AI Backend", "storage": "PostgreSQL"}
+
+
+@app.post("/new-chat", response_model=schemas.ChatCreateResponse)
+def new_chat(db: Session = Depends(get_db)):
+    chat = crud.create_chat(db, title="New Chat")
     return {
-        "status": "ok",
-        "message": "AI Chatbot API is running"
-    }
-
-
-@app.post("/new-chat")
-def new_chat(body: NewChatRequest):
-    chat_id = str(uuid.uuid4())
-
-    chats_db[chat_id] = {
-        "id": chat_id,
-        "title": body.title,
+        "id": chat.id,
+        "title": chat.title,
+        "created_at": chat.created_at,
+        "updated_at": chat.updated_at,
         "messages": [],
-        "created_at": now_iso(),
-        "updated_at": now_iso(),
     }
 
-    return chats_db[chat_id]
 
-
-@app.post("/chat")
-def send_message(body: SendMessageRequest):
-    if body.chat_id not in chats_db:
+@app.post("/chat", response_model=schemas.ChatMessageResponse)
+def send_message(payload: schemas.ChatMessageRequest, db: Session = Depends(get_db)):
+    chat = crud.get_chat(db, payload.chat_id)
+    if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
-    chat = chats_db[body.chat_id]
+    is_first_message = crud.get_message_count(db, chat.id) == 0
 
-    user_msg = {
-        "id": str(uuid.uuid4()),
-        "role": "user",
-        "content": body.message,
-        "timestamp": now_iso(),
-    }
+    # Persist the user's message first.
+    crud.add_message(db, chat.id, role="user", content=payload.message)
 
-    chat["messages"].append(user_msg)
+    # Auto-title the chat from the first user message.
+    if is_first_message:
+        title = payload.message.strip()
+        if len(title) > 50:
+            title = title[:50].rstrip() + "..."
+        crud.update_chat_title(db, chat, title or "New Chat")
 
+    # Call Gemini.
     try:
-        ai_text = chatbot(body.message)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        reply_text = chatbot(payload.message)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=502, detail=f"Gemini request failed: {str(exc)}"
+        ) from exc
 
-    if len(chat["messages"]) == 1:
-        chat["title"] = body.message[:40] + ("..." if len(body.message) > 40 else "")
+    # Persist the assistant's reply.
+    crud.add_message(db, chat.id, role="assistant", content=reply_text)
+    crud.touch_chat(db, chat)
 
-    ai_msg = {
-        "id": str(uuid.uuid4()),
-        "role": "assistant",
-        "content": ai_text,
-        "timestamp": now_iso(),
-    }
-
-    chat["messages"].append(ai_msg)
-    chat["updated_at"] = now_iso()
+    messages = crud.get_messages_ordered(db, chat.id)
 
     return {
-        "chat": chat,
-        "message": ai_msg
+        "chat_id": chat.id,
+        "reply": reply_text,
+        "messages": _serialize_messages(messages),
     }
 
 
-@app.get("/history")
-def get_history():
-    summaries = []
+@app.get("/history", response_model=List[schemas.ChatHistoryItem])
+def history(db: Session = Depends(get_db)):
+    chats = crud.get_all_chats(db)
+    result = []
+    for chat in chats:
+        messages = crud.get_messages_ordered(db, chat.id)
+        preview = _make_preview(messages[-1].content) if messages else ""
+        result.append(
+            {
+                "id": chat.id,
+                "title": chat.title,
+                "created_at": chat.created_at,
+                "updated_at": chat.updated_at,
+                "message_count": len(messages),
+                "preview": preview,
+            }
+        )
+    return result
 
-    for chat in chats_db.values():
-        summaries.append({
-            "id": chat["id"],
-            "title": chat["title"],
-            "created_at": chat["created_at"],
-            "updated_at": chat["updated_at"],
-            "message_count": len(chat["messages"]),
-            "preview": chat["messages"][-1]["content"][:80] if chat["messages"] else "",
-        })
 
-    summaries.sort(key=lambda x: x["updated_at"], reverse=True)
-
-    return summaries
-
-
-@app.get("/chat/{chat_id}")
-def get_chat(chat_id: str):
-    if chat_id not in chats_db:
+@app.get("/chat/{chat_id}", response_model=schemas.ChatDetailResponse)
+def get_chat_detail(chat_id: str, db: Session = Depends(get_db)):
+    chat = crud.get_chat(db, chat_id)
+    if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
 
-    return chats_db[chat_id]
+    messages = crud.get_messages_ordered(db, chat_id)
+    return {
+        "id": chat.id,
+        "title": chat.title,
+        "created_at": chat.created_at,
+        "updated_at": chat.updated_at,
+        "messages": _serialize_messages(messages),
+    }
 
 
-@app.delete("/chat/{chat_id}")
-def delete_chat(chat_id: str):
-    if chat_id not in chats_db:
+@app.patch("/chat/{chat_id}/rename", response_model=schemas.RenameResponse)
+def rename_chat_endpoint(
+    chat_id: str, payload: schemas.RenameRequest, db: Session = Depends(get_db)
+):
+    chat = crud.rename_chat(db, chat_id, payload.title)
+    if not chat:
         raise HTTPException(status_code=404, detail="Chat not found")
-
-    del chats_db[chat_id]
 
     return {
-        "success": True,
-        "deleted_id": chat_id
+        "id": chat.id,
+        "title": chat.title,
+        "updated_at": chat.updated_at,
     }
 
 
-@app.patch("/chat/{chat_id}/rename")
-def rename_chat(chat_id: str, body: RenameChatRequest):
-    if chat_id not in chats_db:
+@app.delete("/chat/{chat_id}", response_model=schemas.DeleteResponse)
+def delete_chat_endpoint(chat_id: str, db: Session = Depends(get_db)):
+    deleted = crud.delete_chat(db, chat_id)
+    if not deleted:
         raise HTTPException(status_code=404, detail="Chat not found")
 
-    chats_db[chat_id]["title"] = body.title
-    chats_db[chat_id]["updated_at"] = now_iso()
-
-    return chats_db[chat_id]
+    return {"detail": "Chat deleted successfully"}
 
 
-@app.delete("/chats/all")
-def clear_all_chats():
-    chats_db.clear()
-
-    return {
-        "success": True
-    }
-
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(
-        "api.index:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-    )
+@app.delete("/chats/all", response_model=schemas.ClearAllResponse)
+def delete_all_chats_endpoint(db: Session = Depends(get_db)):
+    count = crud.delete_all_chats(db)
+    return {"detail": "All chats deleted successfully", "deleted_chats": count}
